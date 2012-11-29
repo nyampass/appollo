@@ -1,0 +1,12 @@
+http:
+    port: 54080
+
+db:
+    name: "appollo-dev"
+    instances:
+        - host: 127.0.0.1
+    options:
+        safe: true
+
+development:
+    wrap-reload: true

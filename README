@@ -1,0 +1,355 @@
+# Appollo
+
+Push notification server.
+
+# アプリケーション登録
+
+Appolloを使うアプリケーションの登録は手動で行う。
+
+appsコレクションに以下のドキュメントを作成
+
+    {secret : 認証用文字列,
+     services : {apns: {server : 使用するAPNSサーバの種類(sandbox/production),
+                        certification: {file : APNS用鍵ファイル(p12),
+                                        password : 鍵ファイルのパスワード},
+                        ignore-extends: ["無視する追加データ名", ...]}
+                 c2dm: {authorization: {email: C2DM用Gmailアカウントのメールアドレス,
+                                        password: C2DM用Gmailアカウントのパスワード,
+                                        source: 送信アプリのパッケージ}
+                        ignore-extends: ["無視する追加データ名", ...]},
+                 gcm: {api-key: Google Cloud MessagingのAPI Key}
+                       ignore-extends: ["無視する追加データ名", ...]}}
+
+# API
+
+## エラー
+
+エラーの場合は400台か500台のステータスを返し、statusフィールドが"failed"となり、errorフィールドを含む。
+
+    {status: "failed",
+     error: {code: (文字列) エラーコード。フォーマットは"分類.詳細",
+             message: (文字列) エラーメッセージ}}
+
+    (例)
+    {status: "failed"
+     error: {code: "users.unregistered",
+             message: "User foobar has not been registered."}}
+
+
+## 認証
+
+    /api/apps/アプリケーションID
+
+以下のAPIは
+
+    X-App-Secret
+
+ヘッダが必要。値はアプリケーション登録時に生成。認証に失敗した場合は401ステータスと以下の結果を返す。
+
+    {status: "failed",
+     error: {code: "apps.authentication-failed",
+             message: "Authentication failed."}}
+
+
+## 通知サービス名
+
+APIに指定できる通知サービス名は下記のもの。
+
+    apns
+    c2dm
+    gcm
+
+これ以外が指定された場合は404ステータスと以下の結果を返す。
+
+    {status: "failed",
+     error: {code: "services.unknown",
+             message: "Unknown service: サービス名"}}
+
+
+## パラメータ
+
+パラメータの型毎のフォーマット
+
+    文字列: 任意の文字列。文字数が指定されている場合もある
+    Bool: 文字列で"true"か"false"
+    整数: Longの範囲内(-2の63乗から2の63乗-1)。別途範囲が指定されている場合もある
+
+パラメータが受け入れられない場合はステータス403でparameters.invalidエラーを返し、error内にparametersフィールドを含む。
+
+    {status: "failed",
+     error: {code: "parameters.invalid",
+             message: "Invaid parameters.",
+             parameters: [{name: (文字列) パラメータ名,
+                           required: {type: (文字列) 受け入れ可能な型(string/bool/integer),
+                                      optional: (Bool) 任意の場合はtrue、必須の場合はfalse,
+                                      range: {min: (整数) 最小値。または最小文字数。
+                                              max: (整数) 最大値。または最大文字数}},
+                           error: (文字列) パラメータエラーコード},
+                          ...]}}
+
+パラメータエラーコード
+
+    unspecified: 必須パラメータが指定されていない
+    out-of-range: 受け入れ可能な範囲外
+    invalid-type: 受け入れ可能な型として解釈できない
+    その他、API毎に固有のコード
+
+
+## 結果のオブジェクト
+
+### ユーザ情報
+
+    {id: (文字列) ユーザID。アプリケーション側が指定したもの。,
+     test: (Bool) テストユーザの場合はtrue。違う場合はfalse。デフォルトはfalse。,
+     excluded: (Bool) 一括送信に含めない場合はtrue。含める場合はfalse。デフォルトはfalse。,
+     registered-at: 登録日時
+     updated-at: 更新日時}
+
+
+### 送信リクエストログ
+
+    {id: (文字列) 送信リクエストID,
+     status: (文字列) 状況。"succeeded"(成功)/"failed"(失敗)/"pending"(他のリクエストの処理待ち)/"processing"(処理中),
+     requested-at: (文字列) リクエスト受付日時("YYYY-MM-DD HH:MM:SS TimeZone"),
+     type: (文字列) "user"(個別)/"all"(一括)
+     user-id: (文字列) 送信先ユーザID。個別送信の場合のみ。,
+     filter: { // 一括の場合のみ
+         test: (Bool) テスト送信の場合はtrue
+     },
+     content: {
+         message: (文字列) メッセージ,
+         number: (整数) バッヂ,
+         extend: {
+             追加で送信したデータ
+         }
+     },
+     processed-at: (文字列) 処理終了日時("YYYY-MM-DD HH:MM:SS TimeZone")。statusがsucceededかfailedの場合のみ。,
+     errors: [{
+         code: (文字列) エラーコード。エラーの場合のみ。
+         message: (文字列) エラーメッセージ。エラーの場合のみ。
+     }, ...]}
+
+
+## /api/apps
+
+### API 端末情報設定
+
+    POST /api/apps/<app-id>/users/<user-id>/services/<service-type>
+
+    app-id: アプリケーションID
+    user-id: ユーザID
+    service-type: 通知サービス名
+
+ユーザの端末情報を設定する。ユーザが存在しない場合は新規に追加される。
+
+#### パラメータ
+
+サービス毎に異なる。
+    
+apns
+    device-token: (文字列) iOSアプリケーション内で取得したデバイストークンをBase64エンコードしたもの
+
+c2dm
+    registration-id: (文字列) Androidアプリケーション内で取得した登録ID
+
+gcm
+    registration-id: (文字列) Androidアプリケーション内で取得した登録ID
+
+#### 結果
+
+    {status: "succeeded"}
+
+#### エラー
+
+    パラメータエラーコード
+    device-token
+        invalid-format: Base64でない
+
+
+### API ユーザ情報取得
+
+    GET /api/apps/<app-id>/users/<user-id>
+
+    app-id: アプリケーションID
+    user-id: ユーザID
+
+ユーザの情報を返す。
+
+#### パラメータ
+
+    なし
+
+#### 結果
+
+    {status: "succeeded",
+     user: ユーザ情報}
+
+#### エラー
+
+    404 users.unregistered: ユーザが登録されていない
+
+
+### API ユーザ削除
+
+    POST /api/apps/<app-id>/users/<user-id>/delete
+
+    app-id: アプリケーションID
+    user-id: ユーザID
+
+ユーザを削除する。
+
+#### パラメータ
+
+    なし
+
+#### 結果
+
+    {status: "succeeded"}
+
+#### エラー
+
+    404 users.unregistered: ユーザが登録されていない
+
+
+### API ユーザ情報設定
+
+    POST /api/apps/<app-id>/users/<user-id>
+
+    app-id: アプリケーションID
+    user-id: ユーザID
+
+端末以外のユーザ情報を設定する。
+
+#### パラメータ
+
+    test: (Bool/任意) trueの場合はテストユーザに変更。falseの場合はテストユーザから除外
+    excluded: (Bool/任意) trueの場合は一括送信に含めないように変更。falseの場合は含めるように変更
+
+#### 結果
+
+    {status: "succeeded",
+     user: 変更後のユーザ情報}
+
+#### エラー
+
+    404 users.unregistered: ユーザが登録されていない
+
+
+### API 指定ユーザへ通知
+
+    POST /api/apps/<app-id>/users/<user-id>/send
+
+    app-id: アプリケーションID
+    user-id: ユーザID
+
+指定したユーザへ通知を送信する。パラメータに問題がなければすぐに応答を返し、直ちには送信されない。状況はログで確認可能。送信が成功しても実際に通知されたとは限らない。
+
+#### パラメータ
+
+    message: (文字列) メッセージ
+    number: (整数/任意/0以上) バッヂ
+    extend.<パラメータ名>: (文字列/任意) 追加で送信するデータ
+
+#### 結果
+
+    {status: "succeeded",
+     request: 送信リクエストログ(pending)}
+
+#### エラー
+
+    404 users.unregistered: ユーザが登録されていない
+
+
+### API 一括送信
+
+    POST /api/apps/<app-id>/all/send
+
+    app-id: アプリケーションID
+
+登録されているユーザ全員へ通知を送信する。パラメータに問題がなければすぐに応答を返し、直ちには送信されない。状況はログで確認可能。送信が成功しても実際に通知されたとは限らない。
+
+#### パラメータ
+
+    message: (文字列) メッセージ
+    number: (整数/任意/0以上) バッヂ
+    extend.<パラメータ名>: (文字列/任意) 追加で送信するデータ
+    filter.test: (Bool/任意) trueの場合はテストユーザにのみ送信
+
+#### 結果
+
+    {status: "succeeded",
+     request: 送信リクエストログ(pending)}
+
+
+### API ユーザ一覧取得
+
+    GET /api/apps/<app-id>/users
+
+    app-id: アプリケーションID
+
+登録されているユーザの情報を返す。
+
+#### パラメータ
+
+    filter.test: (Bool/任意) trueの場合はテストユーザのみ返す
+    cursor.previous: (文字列/任意) ユーザID。このユーザより前のものを返す
+    cursor.next: (文字列/任意) ユーザID。このユーザより後のものを返す
+    cursor.count: (整数/任意/1以上200以下) 返す件数(デフォルト: 50)
+
+#### 結果
+
+    {status: "succeeded",
+     users: {count: (整数) ユーザ数,
+             data: [ユーザ情報, ...],
+             page: {next: 次を取得する際にcursor.nextに指定するユーザID,
+                    previous: 前を取得する際にcursor.nextに指定するユーザID}}}
+
+ユーザIDの昇順。
+
+
+### API 送信リクエストログ取得
+
+    GET /api/apps/<app-id>/requests/<request-id>
+
+    app-id: アプリケーションID
+    request-id: リクエストID
+
+指定した送信リクエストのログを返す。
+
+#### パラメータ
+
+なし
+
+#### 結果
+
+    {status: "succeeded",
+     request: 送信リクエストログ}
+
+#### エラー
+
+    404 requests.not-found: 指定されたIDのログがない
+
+
+### API 送信リクエストログ一覧取得
+
+    GET /api/apps/<app-id>/requests
+
+    app-id: アプリケーションID
+
+#### パラメータ
+
+    filter.test: (Bool/任意) trueの場合はテスト送信のみ返す。falseの場合は非テスト送信のみ返す。
+    filter.status: (文字列/任意) ステータス。指定された場合はこのステータスのもののみ返す。("succeeded"/"failed"/"pending"/"processing")
+    cursor.previous: (文字列/任意) リクエストID。このリクエストより前のものを返す。
+    cursor.next: (文字列/任意) リクエストID。このリクエストより後のものを返す。
+    cursor.count: (整数/任意/1以上200以下) 返す件数(デフォルト: 50)
+
+#### 結果
+
+    {status: "succeeded",
+     requests: {count: (整数) ログ件数,
+                data: [送信リクエストログ, ...],
+                page: {next: 次を取得する際にcursor.nextに指定するリクエストID,
+                       previous: 前を取得する際にcursor.previousに取得するリクエストID}}}
+
+リクエスト受付日時の降順。

@@ -1,0 +1,2 @@
+// users
+db.users.ensureIndex({'app-id': 1, 'id-in-app': 1});
